@@ -13,3 +13,7 @@ gcloud beta runtime-config configs create dev-config
 gcloud beta runtime-config configs variables \
     set api-key "{}" \
     --config-name dev-config
+
+Para desplegar en la nube:
+
+npm run cloud
