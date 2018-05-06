@@ -6,8 +6,8 @@ const runtimeConfig = require('cloud-functions-runtime-config');
 
 
 let assistantResponse = {
-    speech: '',
-    text: ''
+    fulfillmentText: ''
+   // text: ''
 };
 
 
@@ -35,7 +35,7 @@ function getTopic(parameters) {
 }
 
 function getDateFrom(parameters) {
-    return new Date(parameters['date-period'].split('/')[0]);
+    return new Date(parameters['date-period'].startDate);
 }
 
 /**
@@ -44,7 +44,7 @@ function getDateFrom(parameters) {
  * @returns {Date}
  */
 function getDateTo(parameters) {
-    return new Date(parameters['date-period'].split('/')[1]);
+    return new Date(parameters['date-period'].endDate);
 }
 
 /**
@@ -55,7 +55,7 @@ function getDateTo(parameters) {
  */
 exports.meetup = (req, res) => {
 
-    const parameters = req.body.result.parameters;
+    const parameters = req.body.queryResult.parameters;
 
     console.log('Request ' + JSON.stringify(req.body));
 
@@ -119,8 +119,8 @@ exports.meetup = (req, res) => {
 
 
         let responseToUser = humanizeResponse(req, responseJson);
-        assistantResponse.speech = responseToUser;
-        assistantResponse.text = responseToUser;
+        assistantResponse.fulfillmentText = responseToUser;
+      //  assistantResponse.text = responseToUser;
 
         res.status(200).send(assistantResponse);
 
@@ -141,8 +141,8 @@ exports.meetup = (req, res) => {
 
     function humanizeResponse(req, responseJson) {
 
-        const parameters = req.body.result.parameters;
-        let requestSource = (req.body.originalRequest) ? req.body.originalRequest.source : undefined;
+        const parameters = req.body.queryResult.parameters;
+        let requestSource = (req.body.originalDetectIntentRequest) ? req.body.originalDetectIntentRequest.source : undefined;
 
 
         let responseText = '';
