@@ -2,7 +2,7 @@ const request = require('request');
 const dateFormat = require('dateformat');
 const runtimeConfig = require('cloud-functions-runtime-config');
 
-const MAX_DATE='12/31/2040';
+const MAX_DATE = '12/31/2040';
 
 
 /**
@@ -11,9 +11,10 @@ const MAX_DATE='12/31/2040';
  * @param request
  * @returns {any}
  */
-function getParameters(request){
-    return req.body.queryResult.parameters;
+function getParameters(request) {
+    return request.body.queryResult.parameters;
 }
+
 /**
  * Evaluate if value is undefined
  * @param value value to check
@@ -61,7 +62,7 @@ function getDateTo(parameters) {
  * @param dateB
  * @returns {number}
  */
-function orderDateAsc(dateA,dateB){
+function orderDateAsc(dateA, dateB) {
     return dateA.eventDate.getTime() - dateB.eventDate.getTime();
 }
 
@@ -70,7 +71,7 @@ function orderDateAsc(dateA,dateB){
  * @param meetup
  * @returns {boolean}
  */
-function meetupsWithEventAvailable(meetup){
+function meetupsWithEventAvailable(meetup) {
     return !isUndefined(meetup.next_event);
 }
 
@@ -80,7 +81,7 @@ function meetupsWithEventAvailable(meetup){
  * @param meetup API format
  * @returns {{name: *, link: *, eventName: string, eventDate: Date}}
  */
-function meetupAPItoMeetupDetail(meetup){
+function meetupAPItoMeetupDetail(meetup) {
     let detail = {
         name: meetup.name,
         link: meetup.link,
@@ -108,12 +109,7 @@ exports.meetup = (req, res) => {
 
     const parameters = getParameters(req);
 
-   /* console.log('Request ' + JSON.stringify(req.body));
 
-
-    console.log("Parameters " + JSON.stringify(parameters));
-    console.log("parameters " + parameters['date-period']);
-*/
     topic = getTopic(parameters);
     dateFrom = (parameters['date-period'] === '') ? new Date() : getDateFrom(parameters);
     dateTo = (parameters['date-period'] === '') ? new Date(MAX_DATE) : getDateTo(parameters);
@@ -122,13 +118,12 @@ exports.meetup = (req, res) => {
     const topicParam = (topic === '') ? '' : '&text=' + topic;
 
 
-
-
-    runtimeConfig.getVariable('dev-config', 'api-key').then((apiKey) => {
+    runtimeConfig.getVariable('dev-config', 'api-key')
+        .then((apiKey) => {
 
         const API_URL = 'https://api.meetup.com/';
         const FIND_GROUPS = 'find/groups?';
-        const KEY = 'key='+apiKey+'&sign=true';
+        const KEY = 'key=' + apiKey + '&sign=true';
         const ZIP = '&zip=meetup1';
         const FILTER_FIELDS = '&only=score,name,link,city,next_event';
         const MAX_PAGE = '&page=50';
@@ -139,57 +134,33 @@ exports.meetup = (req, res) => {
 
         console.log(API_URL + FIND_GROUPS + params);
 
+        //Invoking API meetup.com and processing the result
         request(API_URL + FIND_GROUPS + params, function (error, response, body) {
 
 
+            let meetups = JSON.parse(body);
 
+            console.log(JSON.stringify(meetups));
 
-        let meetups = JSON.parse(body);
-
-        console.log(JSON.stringify(meetups));
-
-        /*responseJson = meetups.filter(function (meetup) {
-            return !isUndefined(meetup.next_event);
-        })
-            .filter(function (meetup) {
-                return meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime();
-            })
-            .map(function (meetup) {
-                let detail = {
-                    name: meetup.name,
-                    link: meetup.link,
-                    eventName: isUndefined(meetup.next_event.name) ? 'error' : meetup.next_event.name,
-                    eventDate: new Date(meetup.next_event.time)
-                };
-                return detail;
-            });*/
-
-        //Date ordered array
-      /*  responseJson.sort(function (a, b) {
-            return a.eventDate.getTime() - b.eventDate.getTime()
-        });*/
-
-      responseJson.filter(meetupsWithEventAvailable)
-                  .filter(function (meetup) {
-                            return meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime();
-                        })
+            responseJson = meetups
+                .filter(meetupsWithEventAvailable)
+                .filter(function (meetup) {
+                    return meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime();
+                })
                 .map(meetupAPItoMeetupDetail);
 
+            responseJson.sort(orderDateAsc);
+
+            assistantResponse.fulfillmentText = humanizeResponse(req, responseJson);
+
+            res.status(200).send(assistantResponse);
 
 
-       responseJson.sort(orderDateAsc);
+        });
 
-
-        assistantResponse.fulfillmentText =  humanizeResponse(req, responseJson);
-
-        res.status(200).send(assistantResponse);
-
-
-    });
-
-
-    })
-        .catch((err) => res.status(500).send(err));
+        }).catch((err) =>
+            res.status(500).send(err)
+);
 
 
     /**
@@ -201,7 +172,7 @@ exports.meetup = (req, res) => {
 
     function humanizeResponse(req, responseJson) {
 
-        const parameters =  getParameters(req);
+        const parameters = getParameters(req);
         let requestSource = (req.body.originalDetectIntentRequest) ? req.body.originalDetectIntentRequest.source : undefined;
 
 
@@ -228,7 +199,7 @@ exports.meetup = (req, res) => {
             //Tendremos 2 respuestas. Una para google assistant, preparada para ser leída y otra para slack, preparada para hacer click.
             responseJson.forEach(function (detail) {
                 if (requestSource === 'google') {
-                    responseText = responseText.concat( 'El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '.\n');
+                    responseText = responseText.concat('El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '.\n');
                 }
                 else {
                     responseText = responseText.concat('<' + detail.link + ' | ' + detail.name + '> - ' +
