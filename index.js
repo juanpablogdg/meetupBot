@@ -1,15 +1,19 @@
 const request = require('request');
-const _ = require('lodash');
 const dateFormat = require('dateformat');
 const runtimeConfig = require('cloud-functions-runtime-config');
 
+const MAX_DATE = '12/31/2040';
 
 
-let assistantResponse = {
-    speech: '',
-    text: ''
-};
-
+/**
+ * Retrieves the parameters from the request argument
+ *
+ * @param request
+ * @returns {any}
+ */
+function getParameters(request) {
+    return request.body.queryResult.parameters;
+}
 
 /**
  * Evaluate if value is undefined
@@ -34,18 +38,59 @@ function getTopic(parameters) {
     }
 }
 
+/**
+ * Retrieves the startDate from the date-period parameter
+ * @param parameters
+ * @returns {Date}
+ */
 function getDateFrom(parameters) {
-    return new Date(parameters['date-period'].split('/')[0]);
+    return new Date(parameters['date-period'].startDate);
 }
 
 /**
- *
+ * Retrieves the endDate from the date-period parameter
  * @param parameters
  * @returns {Date}
  */
 function getDateTo(parameters) {
-    return new Date(parameters['date-period'].split('/')[1]);
+    return new Date(parameters['date-period'].endDate);
 }
+
+/**
+ * Function to order two dates
+ * @param dateA
+ * @param dateB
+ * @returns {number}
+ */
+function orderDateAsc(dateA, dateB) {
+    return dateA.eventDate.getTime() - dateB.eventDate.getTime();
+}
+
+/**
+ * This functions checks if the meetup has an event
+ * @param meetup
+ * @returns {boolean}
+ */
+function meetupsWithEventAvailable(meetup) {
+    return !isUndefined(meetup.next_event);
+}
+
+
+/**
+ * This functions transforms a meetup with the meetup.com API format to our own detailed format
+ * @param meetup API format
+ * @returns {{name: *, link: *, eventName: string, eventDate: Date}}
+ */
+function meetupAPItoMeetupDetail(meetup) {
+    let detail = {
+        name: meetup.name,
+        link: meetup.link,
+        eventName: isUndefined(meetup.next_event.name) ? 'error' : meetup.next_event.name,
+        eventDate: new Date(meetup.next_event.time)
+    };
+    return detail;
+}
+
 
 /**
  * Responds to any HTTP request that can provide a "message" field in the body.
@@ -55,29 +100,30 @@ function getDateTo(parameters) {
  */
 exports.meetup = (req, res) => {
 
-    const parameters = req.body.result.parameters;
 
-    console.log('Request ' + JSON.stringify(req.body));
+    //Response
+    let assistantResponse = {
+        fulfillmentText: ''
+    };
 
 
-    console.log("Parameters " + JSON.stringify(parameters));
-    console.log("parameters " + parameters['date-period']);
+    const parameters = getParameters(req);
+
 
     topic = getTopic(parameters);
     dateFrom = (parameters['date-period'] === '') ? new Date() : getDateFrom(parameters);
-    dateTo = (parameters['date-period'] === '') ? new Date('12/31/2040') : getDateTo(parameters);
+    dateTo = (parameters['date-period'] === '') ? new Date(MAX_DATE) : getDateTo(parameters);
 
 
-    const topicParam = topic === '' ? '' : '&text=' + topic;
+    const topicParam = (topic === '') ? '' : '&text=' + topic;
 
 
-
-
-    runtimeConfig.getVariable('dev-config', 'api-key').then((apiKey)=>{
+    runtimeConfig.getVariable('dev-config', 'api-key')
+        .then((apiKey) => {
 
         const API_URL = 'https://api.meetup.com/';
         const FIND_GROUPS = 'find/groups?';
-        const KEY = 'key='+apiKey+'&sign=true';
+        const KEY = 'key=' + apiKey + '&sign=true';
         const ZIP = '&zip=meetup1';
         const FILTER_FIELDS = '&only=score,name,link,city,next_event';
         const MAX_PAGE = '&page=50';
@@ -88,48 +134,33 @@ exports.meetup = (req, res) => {
 
         console.log(API_URL + FIND_GROUPS + params);
 
+        //Invoking API meetup.com and processing the result
         request(API_URL + FIND_GROUPS + params, function (error, response, body) {
 
 
+            let meetups = JSON.parse(body);
+
+            console.log(JSON.stringify(meetups));
+
+            responseJson = meetups
+                .filter(meetupsWithEventAvailable)
+                .filter(function (meetup) {
+                    return meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime();
+                })
+                .map(meetupAPItoMeetupDetail);
+
+            responseJson.sort(orderDateAsc);
+
+            assistantResponse.fulfillmentText = humanizeResponse(req, responseJson);
+
+            res.status(200).send(assistantResponse);
 
 
-        let meetups = JSON.parse(body);
-
-        console.log(JSON.stringify(meetups));
-
-        responseJson = meetups.filter(function (meetup) {
-            return !isUndefined(meetup.next_event);
-        })
-            .filter(function (meetup) {
-                return meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime();
-            })
-            .map(function (meetup) {
-                let detail = {
-                    name: meetup.name,
-                    link: meetup.link,
-                    eventName: isUndefined(meetup.next_event.name) ? 'error' : meetup.next_event.name,
-                    eventDate: new Date(meetup.next_event.time)
-                };
-                return detail;
-            });
-        //Date order array
-        responseJson.sort(function (a, b) {
-            return a.eventDate.getTime() - b.eventDate.getTime()
         });
 
-
-        let responseToUser = humanizeResponse(req, responseJson);
-        assistantResponse.speech = responseToUser;
-        assistantResponse.text = responseToUser;
-
-        res.status(200).send(assistantResponse);
-
-
-    });
-
-
-    })
-        .catch((err) => res.status(500).send(err));
+        }).catch((err) =>
+            res.status(500).send(err)
+);
 
 
     /**
@@ -141,8 +172,8 @@ exports.meetup = (req, res) => {
 
     function humanizeResponse(req, responseJson) {
 
-        const parameters = req.body.result.parameters;
-        let requestSource = (req.body.originalRequest) ? req.body.originalRequest.source : undefined;
+        const parameters = getParameters(req);
+        let requestSource = (req.body.originalDetectIntentRequest) ? req.body.originalDetectIntentRequest.source : undefined;
 
 
         let responseText = '';
@@ -150,6 +181,7 @@ exports.meetup = (req, res) => {
 
         topic = getTopic(parameters);
 
+        //Header info
         if (topic !== '') {
             extraInfo += ' sobre ' + topic;
         }
@@ -158,30 +190,25 @@ exports.meetup = (req, res) => {
             extraInfo += ' entre ' + dateFormat(getDateFrom(parameters), 'dd/mm/yy') + ' y ' + dateFormat(getDateTo(parameters), 'dd/mm/yy');
         }
 
+        //Detail info
         if (responseJson.length > 0) {
 
             responseText = 'He encontrado ' + responseJson.length + ' resultados ' + extraInfo + '. Son los siguientes :\n';
 
 
+            //Tendremos 2 respuestas. Una para google assistant, preparada para ser leída y otra para slack, preparada para hacer click.
             responseJson.forEach(function (detail) {
                 if (requestSource === 'google') {
-
-
-                    let detailAssistanMessage = 'El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '.\n';
-                    responseText = responseText.concat(detailAssistanMessage);
-
+                    responseText = responseText.concat('El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '.\n');
                 }
                 else {
-                    let detailSlackMessage = '<' + detail.link + ' | ' + detail.name + '> - ' +
-                        '*' + detail.eventName + '* el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '\n';
-                    responseText = responseText.concat(detailSlackMessage);
+                    responseText = responseText.concat('<' + detail.link + ' | ' + detail.name + '> - ' +
+                        '*' + detail.eventName + '* el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '\n');
                 }
-
-
             });
 
 
-        } else {
+        } else { //Data not found
 
             responseText = 'Lo siento no he podido encontrar nada' + extraInfo;
         }

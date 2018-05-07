@@ -2,7 +2,7 @@
   "name": "botmeetup",
   "version": "1.0.0",
   "description": "",
-  "main": "indexv2.js",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "local": "functions deploy meetup --trigger-http",
@@ -14,7 +14,6 @@
   "dependencies": {
     "cloud-functions-runtime-config": "^0.4.0",
     "dateformat": "^3.0.3",
-    "lodash": "^4.17.5",
     "request": "^2.85.0"
   }
 }
