@@ -13,8 +13,9 @@
   "license": "ISC",
   "dependencies": {
     "cloud-functions-runtime-config": "^0.4.0",
+    "co": "^4.6.0",
     "dateformat": "^3.0.3",
-    "request": "^2.85.0",
-    "co": "^4.6.0"
+    "moment": "^2.22.1",
+    "request": "^2.85.0"
   }
 }

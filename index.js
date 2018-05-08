@@ -1,7 +1,7 @@
 const co = require('co');
 const request = require('request');
-const dateFormat = require('dateformat');
 const runtimeConfig = require('cloud-functions-runtime-config');
+const moment = require('moment');
 
 const MAX_DATE = '12/31/2040';
 
@@ -45,7 +45,7 @@ function getTopic(parameters) {
  * @returns {Date}
  */
 function getDateFrom(parameters) {
-    return new Date(parameters['date-period'].startDate);
+    return moment(parameters['date-period'].startDate);
 }
 
 /**
@@ -54,7 +54,7 @@ function getDateFrom(parameters) {
  * @returns {Date}
  */
 function getDateTo(parameters) {
-    return new Date(parameters['date-period'].endDate);
+    return moment(parameters['date-period'].endDate);
 }
 
 /**
@@ -63,8 +63,8 @@ function getDateTo(parameters) {
  * @param dateB
  * @returns {number}
  */
-function orderDateAsc(dateA, dateB) {
-    return dateA.eventDate.getTime() - dateB.eventDate.getTime();
+function orderDateAsc(eventA, eventB) {
+    return eventA.eventDate - eventB.eventDate;
 }
 
 /**
@@ -87,7 +87,7 @@ function meetupAPItoMeetupDetail(meetup) {
         name: meetup.name,
         link: meetup.link,
         eventName: isUndefined(meetup.next_event.name) ? 'error' : meetup.next_event.name,
-        eventDate: new Date(meetup.next_event.time)
+        eventDate: moment(meetup.next_event.time)
     };
     return detail;
 }
@@ -134,7 +134,7 @@ function humanizeResponse(req, responseJson) {
     }
 
     if (parameters['date-period'] !== '') {
-        extraInfo += ' entre ' + dateFormat(getDateFrom(parameters), 'dd/mm/yy') + ' y ' + dateFormat(getDateTo(parameters), 'dd/mm/yy');
+        extraInfo += ' entre '+ getDateFrom(parameters).format('DD/MM/YY') + ' y ' + getDateTo(parameters).format('DD/MM/YY');
     }
 
     //Detail info
@@ -146,11 +146,11 @@ function humanizeResponse(req, responseJson) {
         //Tendremos 2 respuestas. Una para google assistant, preparada para ser leída y otra para slack, preparada para hacer click.
         responseJson.forEach(function (detail) {
             if (requestSource === 'google') {
-                responseText = responseText.concat('El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '.\n');
+                responseText = responseText.concat('El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + detail.eventDate.format('DD/MM/YY') + '.\n');
             }
             else {
                 responseText = responseText.concat('<' + detail.link + ' | ' + detail.name + '> - ' +
-                    '*' + detail.eventName + '* el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '\n');
+                    '*' + detail.eventName + '* el próximo día ' + detail.eventDate.format('DD/MM/YY') + '\n');
             }
         });
 
@@ -185,8 +185,8 @@ exports.meetup = (req, res) => {
 
 
     topic = getTopic(parameters);
-    dateFrom = (parameters['date-period'] === '') ? new Date() : getDateFrom(parameters);
-    dateTo = (parameters['date-period'] === '') ? new Date(MAX_DATE) : getDateTo(parameters);
+    dateFrom = (parameters['date-period'] === '') ? moment() : getDateFrom(parameters);
+    dateTo = (parameters['date-period'] === '') ? moment(MAX_DATE) : getDateTo(parameters);
 
 
     const topicParam = (topic === '') ? '' : '&text=' + topic;
@@ -212,7 +212,7 @@ exports.meetup = (req, res) => {
 
         let responseJson = meetups
                 .filter(meetupsWithEventAvailable)
-                .filter((meetup) => meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime())
+                .filter((meetup) =>  moment(meetup.next_event.time).isBetween(dateFrom,dateTo))
                 .map(meetupAPItoMeetupDetail);
 
         responseJson.sort(orderDateAsc);
