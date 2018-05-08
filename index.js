@@ -1,3 +1,4 @@
+const co = require('co');
 const request = require('request');
 const dateFormat = require('dateformat');
 const runtimeConfig = require('cloud-functions-runtime-config');
@@ -91,6 +92,79 @@ function meetupAPItoMeetupDetail(meetup) {
     return detail;
 }
 
+/**
+ * This function call meetup.com api and returns all the available meetups.
+ * @returns meetups
+ */
+function getMeetups(uri) {
+    return new Promise((resolve, reject) => {
+        request(uri, function (error, response, body) {
+            if (error) {
+                reject(error);
+            } else {
+                let meetups = JSON.parse(body);
+                console.log(JSON.stringify(meetups));
+                resolve(meetups);
+            }
+        });
+    });
+}
+
+/**
+ * Transform the answer into a humand-understandable reply
+ * @param req request
+ * @param responseJson JSON with the answer from meetup.com
+ * @returns {string} user response
+ */
+
+function humanizeResponse(req, responseJson) {
+
+    const parameters = getParameters(req);
+    let requestSource = (req.body.originalDetectIntentRequest) ? req.body.originalDetectIntentRequest.source : undefined;
+
+
+    let responseText = '';
+    let extraInfo = '';
+
+    topic = getTopic(parameters);
+
+    //Header info
+    if (topic !== '') {
+        extraInfo += ' sobre ' + topic;
+    }
+
+    if (parameters['date-period'] !== '') {
+        extraInfo += ' entre ' + dateFormat(getDateFrom(parameters), 'dd/mm/yy') + ' y ' + dateFormat(getDateTo(parameters), 'dd/mm/yy');
+    }
+
+    //Detail info
+    if (responseJson.length > 0) {
+
+        responseText = 'He encontrado ' + responseJson.length + ' resultados ' + extraInfo + '. Son los siguientes :\n';
+
+
+        //Tendremos 2 respuestas. Una para google assistant, preparada para ser leída y otra para slack, preparada para hacer click.
+        responseJson.forEach(function (detail) {
+            if (requestSource === 'google') {
+                responseText = responseText.concat('El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '.\n');
+            }
+            else {
+                responseText = responseText.concat('<' + detail.link + ' | ' + detail.name + '> - ' +
+                    '*' + detail.eventName + '* el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '\n');
+            }
+        });
+
+
+    } else { //Data not found
+
+        responseText = 'Lo siento no he podido encontrar nada' + extraInfo;
+    }
+
+
+    return responseText;
+
+}
+
 
 /**
  * Responds to any HTTP request that can provide a "message" field in the body.
@@ -117,9 +191,8 @@ exports.meetup = (req, res) => {
 
     const topicParam = (topic === '') ? '' : '&text=' + topic;
 
-
-    runtimeConfig.getVariable('dev-config', 'api-key')
-        .then((apiKey) => {
+    co(function* () {
+        let apiKey = yield runtimeConfig.getVariable('dev-config', 'api-key');
 
         const API_URL = 'https://api.meetup.com/';
         const FIND_GROUPS = 'find/groups?';
@@ -135,89 +208,21 @@ exports.meetup = (req, res) => {
         console.log(API_URL + FIND_GROUPS + params);
 
         //Invoking API meetup.com and processing the result
-        request(API_URL + FIND_GROUPS + params, function (error, response, body) {
+        let meetups = yield getMeetups(API_URL + FIND_GROUPS + params);
 
-
-            let meetups = JSON.parse(body);
-
-            console.log(JSON.stringify(meetups));
-
-            responseJson = meetups
+        let responseJson = meetups
                 .filter(meetupsWithEventAvailable)
-                .filter(function (meetup) {
-                    return meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime();
-                })
+                .filter((meetup) => meetup.next_event.time > dateFrom.getTime() && meetup.next_event.time < dateTo.getTime())
                 .map(meetupAPItoMeetupDetail);
 
-            responseJson.sort(orderDateAsc);
+        responseJson.sort(orderDateAsc);
 
-            assistantResponse.fulfillmentText = humanizeResponse(req, responseJson);
+        assistantResponse.fulfillmentText = humanizeResponse(req, responseJson);
 
-            res.status(200).send(assistantResponse);
-
-
-        });
-
-        }).catch((err) =>
-            res.status(500).send(err)
-);
-
-
-    /**
-     * Transform the answer into a humand-understandable reply
-     * @param req request
-     * @param responseJson JSON with the answer from meetup.com
-     * @returns {string} user response
-     */
-
-    function humanizeResponse(req, responseJson) {
-
-        const parameters = getParameters(req);
-        let requestSource = (req.body.originalDetectIntentRequest) ? req.body.originalDetectIntentRequest.source : undefined;
-
-
-        let responseText = '';
-        let extraInfo = '';
-
-        topic = getTopic(parameters);
-
-        //Header info
-        if (topic !== '') {
-            extraInfo += ' sobre ' + topic;
-        }
-
-        if (parameters['date-period'] !== '') {
-            extraInfo += ' entre ' + dateFormat(getDateFrom(parameters), 'dd/mm/yy') + ' y ' + dateFormat(getDateTo(parameters), 'dd/mm/yy');
-        }
-
-        //Detail info
-        if (responseJson.length > 0) {
-
-            responseText = 'He encontrado ' + responseJson.length + ' resultados ' + extraInfo + '. Son los siguientes :\n';
-
-
-            //Tendremos 2 respuestas. Una para google assistant, preparada para ser leída y otra para slack, preparada para hacer click.
-            responseJson.forEach(function (detail) {
-                if (requestSource === 'google') {
-                    responseText = responseText.concat('El grupo ' + detail.name + ' organiza ' + detail.eventName + ' el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '.\n');
-                }
-                else {
-                    responseText = responseText.concat('<' + detail.link + ' | ' + detail.name + '> - ' +
-                        '*' + detail.eventName + '* el próximo día ' + dateFormat(detail.eventDate, 'dd/mm/yy') + '\n');
-                }
-            });
-
-
-        } else { //Data not found
-
-            responseText = 'Lo siento no he podido encontrar nada' + extraInfo;
-        }
-
-
-        return responseText;
-
-    }
-
+        res.status(200).send(assistantResponse);
+        
+    }).catch((err) => {
+        res.status(500).send(err);
+    });
 
 }
-;
